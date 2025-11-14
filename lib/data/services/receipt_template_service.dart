@@ -188,12 +188,13 @@ class ReceiptTemplateService extends GetxService {
         String itemContent = loopContent;
 
         // 列宽定义（保证对齐）：
-        // 商品名(14字符左对齐) + 单价(8字符右对齐) + 数量(5字符右对齐) + 价格(8字符右对齐)
-        // 使用固定宽度确保表格对齐，总宽度35字符
-        final name = _padString(product.name, 14, alignRight: false);
+        // 商品名(9字符左对齐) + 单价(7字符右对齐) + 数量(5字符右对齐) + 价格(7字符右对齐)
+        // 总宽度28字符，适配58mm热敏纸（32字符宽度）
+        
+        // 格式化价格列（始终在第一行对应列位置显示）
         final unitPrice = _padString(
           _formatAmount(product.unitPrice, withSymbol: false),
-          8,
+          7,
           alignRight: true,
         );
         final quantity = _padString(
@@ -203,15 +204,41 @@ class ReceiptTemplateService extends GetxService {
         );
         final totalPrice = _padString(
           _formatAmount(product.totalPrice, withSymbol: false),
-          8,
+          7,
           alignRight: true,
         );
 
+        // 商品名支持自动换行
+        final nameLines = _wrapText(product.name, 9);
+        
+        // 构建商品行内容（严格列对齐）：
+        // 第1行：商品名第1部分 + 单价 + 数量 + 价格（价格信息始终在第一行）
+        // 第2-N行：商品名剩余部分 + 空白列（保持对齐）
+        final emptyPrice = _padString('', 7, alignRight: true);  // 空白单价列
+        final emptyQty = _padString('', 5, alignRight: true);    // 空白数量列
+        final emptyTotal = _padString('', 7, alignRight: true);  // 空白价格列
+        
+        String nameContent;
+        if (nameLines.length == 1) {
+          // 单行：商品名 + 单价 + 数量 + 价格
+          nameContent = nameLines[0] + unitPrice + quantity + totalPrice;
+        } else {
+          // 多行：
+          // 第1行：商品名 + 单价 + 数量 + 价格
+          // 第2-N行：商品名 + 空白 + 空白 + 空白（保持列对齐）
+          final allLines = <String>[];
+          allLines.add(nameLines[0] + unitPrice + quantity + totalPrice); // 第1行显示价格
+          for (int i = 1; i < nameLines.length; i++) {
+            allLines.add(nameLines[i] + emptyPrice + emptyQty + emptyTotal); // 后续行空白
+          }
+          nameContent = allLines.join('\n');
+        }
+
         // 替换商品相关占位符
-        itemContent = itemContent.replaceAll('{{name}}', name);
-        itemContent = itemContent.replaceAll('{{unitPrice}}', unitPrice);
-        itemContent = itemContent.replaceAll('{{quantity}}', quantity);
-        itemContent = itemContent.replaceAll('{{totalPrice}}', totalPrice);
+        itemContent = itemContent.replaceAll('{{name}}', nameContent);
+        itemContent = itemContent.replaceAll('{{unitPrice}}', '');
+        itemContent = itemContent.replaceAll('{{quantity}}', '');
+        itemContent = itemContent.replaceAll('{{totalPrice}}', '');
 
         buffer.write(itemContent);
       }
@@ -263,6 +290,53 @@ class ReceiptTemplateService extends GetxService {
     } else {
       return text + ' ' * paddingNeeded;
     }
+  }
+
+  /// 计算文本实际显示宽度（中文2字符，英文1字符）
+  int _calculateTextWidth(String text) {
+    int width = 0;
+    for (int i = 0; i < text.length; i++) {
+      final code = text.codeUnitAt(i);
+      if (code >= 0x4E00 && code <= 0x9FFF) {
+        width += 2; // 中文字符
+      } else {
+        width += 1; // 英文/数字/符号
+      }
+    }
+    return width;
+  }
+
+  /// 将长文本按指定宽度分行（支持换行）
+  List<String> _wrapText(String text, int maxWidth) {
+    if (_calculateTextWidth(text) <= maxWidth) {
+      return [_padString(text, maxWidth, alignRight: false)];
+    }
+
+    final List<String> lines = [];
+    String currentLine = '';
+    int currentWidth = 0;
+
+    for (int i = 0; i < text.length; i++) {
+      final char = text[i];
+      final charWidth = _calculateTextWidth(char);
+
+      if (currentWidth + charWidth > maxWidth) {
+        // 当前行满了，保存并开始新行
+        lines.add(_padString(currentLine, maxWidth, alignRight: false));
+        currentLine = char;
+        currentWidth = charWidth;
+      } else {
+        currentLine += char;
+        currentWidth += charWidth;
+      }
+    }
+
+    // 添加最后一行
+    if (currentLine.isNotEmpty) {
+      lines.add(_padString(currentLine, maxWidth, alignRight: false));
+    }
+
+    return lines;
   }
 
   /// 生成打印内容（包含模板渲染和格式化）
@@ -357,7 +431,7 @@ class ReceiptTemplateService extends GetxService {
 [left]存币单号：{{storageId}}[/left]
 [left]门店：{{storeName}}[/left]
 [center]============================[/center]
-[left]商品              单价   数量     价格[/left]
+[left]商品        单价 数量   价格[/left]
 [center]----------------------------[/center]
 {{#products}}
 [left]{{name}} {{unitPrice}} {{quantity}} {{totalPrice}}[/left]
@@ -392,7 +466,7 @@ class ReceiptTemplateService extends GetxService {
 [left]存币单号：{{storageId}}[/left]
 [left]门店：{{storeName}}[/left]
 [center]============================[/center]
-[left]商品              单价   数量     价格[/left]
+[left]商品        单价 数量   价格[/left]
 [center]----------------------------[/center]
 {{#products}}
 [left]{{name}} {{unitPrice}} {{quantity}} {{totalPrice}}[/left]
