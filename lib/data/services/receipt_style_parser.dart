@@ -4,7 +4,12 @@ import 'package:flutter/material.dart';
 /// 将样式标记文本转换为富文本组件
 class ReceiptStyleParser {
   /// 解析带样式标记的文本，返回 TextSpan 列表
-  static List<InlineSpan> parse(String text, {double baseFontSize = 14.0}) {
+  /// [useMonospace] 是否使用等宽字体（默认 true，用于商品列表对齐）
+  static List<InlineSpan> parse(
+    String text, {
+    double baseFontSize = 14.0,
+    bool useMonospace = true,
+  }) {
     final List<InlineSpan> spans = [];
 
     // 处理空文本
@@ -12,7 +17,10 @@ class ReceiptStyleParser {
       return [
         TextSpan(
           text: '',
-          style: TextStyle(fontSize: baseFontSize),
+          style: TextStyle(
+            fontSize: baseFontSize,
+            fontFamily: useMonospace ? 'monospace' : null,
+          ),
         ),
       ];
     }
@@ -28,7 +36,7 @@ class ReceiptStyleParser {
       final cleanedLine = _removeAlignmentTags(line);
 
       // 解析行内样式
-      final lineSpans = _parseLineStyles(cleanedLine, baseFontSize);
+      final lineSpans = _parseLineStyles(cleanedLine, baseFontSize, useMonospace);
 
       // 如果有对齐方式，包装在 WidgetSpan 中
       if (alignment != null) {
@@ -76,7 +84,11 @@ class ReceiptStyleParser {
   }
 
   /// 解析行内样式
-  static List<InlineSpan> _parseLineStyles(String text, double baseFontSize) {
+  static List<InlineSpan> _parseLineStyles(
+    String text,
+    double baseFontSize,
+    bool useMonospace,
+  ) {
     final List<InlineSpan> spans = [];
 
     // 处理空行
@@ -84,7 +96,10 @@ class ReceiptStyleParser {
       return [
         TextSpan(
           text: '',
-          style: TextStyle(fontSize: baseFontSize),
+          style: TextStyle(
+            fontSize: baseFontSize,
+            fontFamily: useMonospace ? 'monospace' : null,
+          ),
         ),
       ];
     }
@@ -121,7 +136,11 @@ class ReceiptStyleParser {
           spans.add(
             TextSpan(
               text: text.substring(pos),
-              style: TextStyle(fontSize: baseFontSize, color: Colors.black87),
+              style: TextStyle(
+                fontSize: baseFontSize,
+                color: Colors.black87,
+                fontFamily: useMonospace ? 'monospace' : null,
+              ),
             ),
           );
         }
@@ -133,13 +152,17 @@ class ReceiptStyleParser {
         spans.add(
           TextSpan(
             text: text.substring(pos, nextMarkPos),
-            style: TextStyle(fontSize: baseFontSize, color: Colors.black87),
+            style: TextStyle(
+              fontSize: baseFontSize,
+              color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
+            ),
           ),
         );
       }
 
       // 解析样式标记
-      final result = _parseStyleMark(text, nextMarkPos, baseFontSize);
+      final result = _parseStyleMark(text, nextMarkPos, baseFontSize, useMonospace);
       if (result != null) {
         spans.add(result.span);
         pos = result.endPos;
@@ -148,7 +171,11 @@ class ReceiptStyleParser {
         spans.add(
           TextSpan(
             text: text[nextMarkPos],
-            style: TextStyle(fontSize: baseFontSize, color: Colors.black87),
+            style: TextStyle(
+              fontSize: baseFontSize,
+              color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
+            ),
           ),
         );
         pos = nextMarkPos + 1;
@@ -178,6 +205,7 @@ class ReceiptStyleParser {
     String text,
     int startPos,
     double baseFontSize,
+    bool useMonospace,
   ) {
     // 粗斜体 ***text***
     if (text.substring(startPos).startsWith('***')) {
@@ -192,6 +220,7 @@ class ReceiptStyleParser {
               fontWeight: FontWeight.bold,
               fontStyle: FontStyle.italic,
               color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
             ),
           ),
           endPos: endPos + 3,
@@ -211,6 +240,7 @@ class ReceiptStyleParser {
               fontSize: baseFontSize,
               fontWeight: FontWeight.bold,
               color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
             ),
           ),
           endPos: endPos + 2,
@@ -230,6 +260,7 @@ class ReceiptStyleParser {
               fontSize: baseFontSize,
               fontStyle: FontStyle.italic,
               color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
             ),
           ),
           endPos: endPos + 1,
@@ -249,6 +280,7 @@ class ReceiptStyleParser {
               fontSize: baseFontSize,
               decoration: TextDecoration.underline,
               color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
             ),
           ),
           endPos: endPos + 2,
@@ -267,6 +299,7 @@ class ReceiptStyleParser {
             style: TextStyle(
               fontSize: baseFontSize,
               decoration: TextDecoration.lineThrough,
+              fontFamily: useMonospace ? 'monospace' : null,
               color: Colors.black54,
             ),
           ),
@@ -293,6 +326,7 @@ class ReceiptStyleParser {
             style: TextStyle(
               fontSize: baseFontSize * 0.85,
               color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
             ),
           ),
           endPos: endPos + 8,
@@ -319,6 +353,7 @@ class ReceiptStyleParser {
               fontSize: baseFontSize * 1.3,
               fontWeight: FontWeight.w500,
               color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
             ),
           ),
           endPos: endPos + 8,
@@ -345,6 +380,7 @@ class ReceiptStyleParser {
               fontSize: baseFontSize * 1.6,
               fontWeight: FontWeight.bold,
               color: Colors.black87,
+              fontFamily: useMonospace ? 'monospace' : null,
             ),
           ),
           endPos: endPos + 5,

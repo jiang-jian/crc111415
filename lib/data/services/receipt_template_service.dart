@@ -187,21 +187,23 @@ class ReceiptTemplateService extends GetxService {
       for (final product in data.products!) {
         String itemContent = loopContent;
 
-        // 优化列宽：商品名(16字符) 单价(6字符) 数量(3字符) 价格(6字符)
-        final name = _padString(product.name, 16);
+        // 列宽定义（保证对齐）：
+        // 商品名(14字符左对齐) + 单价(8字符右对齐) + 数量(5字符右对齐) + 价格(8字符右对齐)
+        // 使用固定宽度确保表格对齐，总宽度35字符
+        final name = _padString(product.name, 14, alignRight: false);
         final unitPrice = _padString(
           _formatAmount(product.unitPrice, withSymbol: false),
-          6,
+          8,
           alignRight: true,
         );
         final quantity = _padString(
           product.quantity.toString(),
-          3,
+          5,
           alignRight: true,
         );
         final totalPrice = _padString(
           _formatAmount(product.totalPrice, withSymbol: false),
-          6,
+          8,
           alignRight: true,
         );
 
@@ -329,18 +331,18 @@ class ReceiptTemplateService extends GetxService {
 [center]===[/center]
 [left]**存币单号：**{{storageId}}[/left]
 [left]**门店：**{{storeName}}[/left]
----
+[center]---[/center]
 [center]{{barcode}}[/center]
----
+[center]---[/center]
 [left]会员编号：{{memberId}}[/left]
 [left]操作时间：{{operationTime}}[/left]
 [left]**彩票数量：**<large>{{numberTickets}}</large>[/left]
-===
+[center]===[/center]
 [left]<small>打印时间：{{printTime}}</small>[/left]
 [left]<small>操作员：{{operatorName}}</small>[/left]
 [left]<small>地址：{{storeAddress}}</small>[/left]
 [left]<small>电话：{{telephone}}</small>[/left]
-===
+[center]===[/center]
 [center]请妥善保管好您的小票[/center]
 [center]如需兑换礼品请持小票到收银台兑换！[/center]
 [center]**感谢惠顾！祝您游玩愉快！**[/center]
@@ -353,25 +355,25 @@ class ReceiptTemplateService extends GetxService {
     return '''
 [center]<xl>**HOLOX超乐城**</xl>[/center]
 [left]存币单号：{{storageId}}[/left]
-[left]============================[/left]
-[left]{{storeName}}[/left]
-[left]商品          单价 数量 价格[/left]
-[left]----------------------------[/left]
+[left]门店：{{storeName}}[/left]
+[center]============================[/center]
+[left]商品              单价   数量     价格[/left]
+[center]----------------------------[/center]
 {{#products}}
 [left]{{name}} {{unitPrice}} {{quantity}} {{totalPrice}}[/left]
 {{/products}}
-[left]----------------------------[/left]
+[center]----------------------------[/center]
 [left]小计：{{subtotal}}[/left]
 [left]优惠金额：-{{discount}}[/left]
 [left]应收金额：{{totalAmount}}[/left]
 [left]实收金额：{{paidAmount}}[/left]
 [left]找零金额：{{changeAmount}}[/left]
-[left]============================[/left]
+[center]============================[/center]
 [left]打印时间：{{printTime}}[/left]
 [left]操作员：{{operatorName}}[/left]
 [left]地址：{{storeAddress}}[/left]
 [left]电话：{{telephone}}[/left]
-[left]----------------------------[/left]
+[center]----------------------------[/center]
 [left]请当面点清所有商品及找零[/left]
 [left]如有质量问题请在30天内凭小票换货[/left]
 [center]============================[/center]
@@ -388,25 +390,25 @@ class ReceiptTemplateService extends GetxService {
     return '''
 [center]<xl>**HOLOX超乐城**</xl>[/center]
 [left]存币单号：{{storageId}}[/left]
-[left]============================[/left]
-[left]{{storeName}}[/left]
-[left]商品          单价 数量 价格[/left]
-[left]----------------------------[/left]
+[left]门店：{{storeName}}[/left]
+[center]============================[/center]
+[left]商品              单价   数量     价格[/left]
+[center]----------------------------[/center]
 {{#products}}
 [left]{{name}} {{unitPrice}} {{quantity}} {{totalPrice}}[/left]
 {{/products}}
-[left]----------------------------[/left]
+[center]----------------------------[/center]
 [left]小计：{{subtotal}}[/left]
 [left]优惠彩票：-{{discount}}[/left]
 [left]应收彩票：{{totalAmount}}[/left]
 [left]实收彩票：{{paidAmount}}[/left]
 [left]剩余彩票：{{remainingTickets}}[/left]
-[left]============================[/left]
+[center]============================[/center]
 [left]打印时间：{{printTime}}[/left]
 [left]操作员：{{operatorName}}[/left]
 [left]地址：{{storeAddress}}[/left]
 [left]电话：{{telephone}}[/left]
-[left]----------------------------[/left]
+[center]----------------------------[/center]
 [left]请当面点清所有商品[/left]
 [left]如有质量问题请在30天内凭小票换货（无退款）[/left]
 [center]============================[/center]
