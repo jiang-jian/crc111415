@@ -101,6 +101,7 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
             // === 中国制造商 ===
             0x0403,  // FTDI - 常用于串口读卡器
             0x1a86,  // QinHeng Electronics - 沁恒电子
+            0x1483,  // Shenzhen MingWah Aohan (明华澳汉) - USB HID读卡器
         )
     }
 
@@ -183,15 +184,39 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        
+        // 🔧 FIX: 先关闭连接，避免正在进行的操作访问已关闭的资源
+        closeConnection()
+        
+        // 🔧 FIX: 安全关闭Executor，等待任务完成
+        cardReadExecutor.shutdown()
+        try {
+            // 等待最多5秒让正在执行的任务完成
+            if (!cardReadExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                Log.w(TAG, "Executor tasks did not finish in time, forcing shutdown")
+                // 强制关闭未完成的任务
+                cardReadExecutor.shutdownNow()
+                // 再等待2秒确保所有任务终止
+                if (!cardReadExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                    Log.e(TAG, "Executor did not terminate")
+                }
+            }
+        } catch (e: InterruptedException) {
+            Log.e(TAG, "Interrupted while waiting for executor termination", e)
+            cardReadExecutor.shutdownNow()
+            Thread.currentThread().interrupt()
+        }
+        
+        // 最后注销广播接收器
         try {
             context?.unregisterReceiver(usbReceiver)
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering receiver: ${e.message}")
         }
-        closeConnection()
-        cardReadExecutor.shutdown()
+        
         context = null
         usbManager = null
+        Log.d(TAG, "ExternalCardReaderPlugin detached and cleaned up")
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
@@ -279,11 +304,18 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
             return true
         }
 
-        // 方法2: 检查接口类
+        // 方法2: 检查接口类（包括CCID和HID）
         for (i in 0 until device.interfaceCount) {
             val usbInterface = device.getInterface(i)
+            // CCID接口
             if (usbInterface.interfaceClass == USB_CLASS_SMART_CARD) {
                 Log.d(TAG, "Device ${device.deviceName} is a card reader (CCID interface)")
+                return true
+            }
+            // HID接口（用于键盘模拟型读卡器，如明华URF-R330）
+            // USB HID Class = 0x03, 但只有已知厂商的HID设备才认为是读卡器
+            if (usbInterface.interfaceClass == 0x03 && device.vendorId in KNOWN_CARD_READER_VENDORS) {
+                Log.d(TAG, "Device ${device.deviceName} is a HID card reader (vendor: 0x${device.vendorId.toString(16)})")
                 return true
             }
         }
@@ -524,6 +556,11 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
                 "model" to if (productName != "Unknown") productName else "USB Hub with Card Reader",
                 "specifications" to "ISO 7816, SD/MMC"
             )
+            0x1483 -> mapOf(
+                "manufacturer" to "Shenzhen MingWah Aohan (明华澳汉)",
+                "model" to if (productName != "Unknown") productName else "URF-R330",
+                "specifications" to "ISO 14443 Type A, Mifare 1K/4K, USB HID Keyboard Emulation"
+            )
             
             // === 默认 ===
             else -> mapOf(
@@ -592,6 +629,7 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
             0x10c4 -> "Silicon Labs"                     // 芯科科技
             0x067b -> "Prolific Technology"             // 笔记本读卡器
             0x0424 -> "Microchip (SMSC)"                // Microchip收购SMSC
+            0x1483 -> "Shenzhen MingWah Aohan (明华澳汉)" // USB HID读卡器
             
             else -> "Unknown Manufacturer"
         }
@@ -743,7 +781,7 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
 
     /**
      * 执行实际的读卡操作
-     * 使用CCID协议与读卡器通信
+     * 根据设备类型自动选择CCID或HID协议
      */
     private fun performCardRead(device: UsbDevice): Map<String, Any>? {
         var connection: UsbDeviceConnection? = null
@@ -752,6 +790,7 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
             Log.d(TAG, "========== 开始读卡操作 ==========")
             Log.d(TAG, "目标设备: ${device.deviceName}")
             Log.d(TAG, "设备ID: ${device.deviceId}")
+            Log.d(TAG, "厂商ID: 0x${device.vendorId.toString(16)}")
             
             connection = usbManager?.openDevice(device)
             if (connection == null) {
@@ -766,6 +805,73 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
                 currentConnection = connection
             }
 
+            // 检测设备类型：CCID 或 HID
+            val deviceType = detectDeviceType(device)
+            Log.d(TAG, "设备类型: $deviceType")
+            
+            return when (deviceType) {
+                "HID" -> performHidCardRead(device, connection)
+                "CCID" -> performCcidCardRead(device, connection)
+                else -> {
+                    Log.e(TAG, "✗ 未知设备类型")
+                    null
+                }
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "IO Error during card read: ${e.message}", e)
+            return hashMapOf(
+                "error" to "IO_ERROR",
+                "message" to (e.message ?: "通信错误"),
+                "isValid" to false
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during card read: ${e.message}", e)
+            return hashMapOf(
+                "error" to "READ_ERROR",
+                "message" to (e.message ?: "读卡失败"),
+                "isValid" to false
+            )
+        } finally {
+            // 关闭连接
+            connection?.close()
+            synchronized(connectionLock) {
+                currentConnection = null
+            }
+        }
+    }
+
+    /**
+     * 检测设备类型（CCID或HID）
+     */
+    private fun detectDeviceType(device: UsbDevice): String {
+        // 检查是否有CCID接口
+        for (i in 0 until device.interfaceCount) {
+            val usbInterface = device.getInterface(i)
+            if (usbInterface.interfaceClass == USB_CLASS_SMART_CARD) {
+                return "CCID"
+            }
+        }
+        
+        // 检查是否有HID接口（且为已知读卡器厂商）
+        for (i in 0 until device.interfaceCount) {
+            val usbInterface = device.getInterface(i)
+            if (usbInterface.interfaceClass == 0x03) {  // HID Class
+                // 明华等厂商使用HID键盘模拟
+                if (device.vendorId == 0x1483) {  // Minghua
+                    return "HID"
+                }
+            }
+        }
+        
+        return "UNKNOWN"
+    }
+
+    /**
+     * 使用CCID协议读卡（原有逻辑）
+     */
+    private fun performCcidCardRead(device: UsbDevice, connection: UsbDeviceConnection): Map<String, Any>? {
+        var claimedInterface: android.hardware.usb.UsbInterface? = null
+        try {
             // 查找CCID接口
             Log.d(TAG, "正在查找CCID接口...")
             val ccidInterface = findCCIDInterface(device)
@@ -984,15 +1090,193 @@ class ExternalCardReaderPlugin : FlutterPlugin, MethodCallHandler {
         } finally {
             // 🔧 FIX: 先释放接口，再关闭连接（防止接口占用）
             try {
-                claimedInterface?.let { connection?.releaseInterface(it) }
+                claimedInterface?.let { connection.releaseInterface(it) }
             } catch (e: Exception) {
                 Log.e(TAG, "Error releasing interface: ${e.message}")
             }
-            connection?.close()
-            // 🔧 FIX: 使用同步锁保护 currentConnection
-            synchronized(connectionLock) {
-                currentConnection = null
+        }
+    }
+
+    /**
+     * 使用HID协议读卡（明华URF-R330等键盘模拟型读卡器）
+     */
+    private fun performHidCardRead(device: UsbDevice, connection: UsbDeviceConnection): Map<String, Any>? {
+        var claimedInterface: android.hardware.usb.UsbInterface? = null
+        try {
+            // 查找HID接口
+            Log.d(TAG, "正在查找HID接口...")
+            var hidInterface: android.hardware.usb.UsbInterface? = null
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                if (iface.interfaceClass == 0x03) {  // HID Class
+                    hidInterface = iface
+                    Log.d(TAG, "✓ 找到HID接口: interface=$i, class=${iface.interfaceClass}")
+                    break
+                }
             }
+            
+            if (hidInterface == null) {
+                Log.e(TAG, "✗ 未找到HID接口")
+                return null
+            }
+            
+            // 声明接口
+            val claimed = connection.claimInterface(hidInterface, true)
+            if (!claimed) {
+                Log.e(TAG, "✗ 无法声明HID接口")
+                return null
+            }
+            claimedInterface = hidInterface
+            Log.d(TAG, "✓ HID接口声明成功")
+            
+            // 查找输入端点（Interrupt IN）
+            var inEndpoint: UsbEndpoint? = null
+            for (i in 0 until hidInterface.endpointCount) {
+                val endpoint = hidInterface.getEndpoint(i)
+                if (endpoint.direction == android.hardware.usb.UsbConstants.USB_DIR_IN &&
+                    endpoint.type == android.hardware.usb.UsbConstants.USB_ENDPOINT_XFER_INT) {
+                    inEndpoint = endpoint
+                    Log.d(TAG, "✓ 找到HID输入端点: address=0x${endpoint.address.toString(16)}")
+                    break
+                }
+            }
+            
+            if (inEndpoint == null) {
+                Log.e(TAG, "✗ 未找到HID输入端点")
+                return null
+            }
+            
+            // 读取HID报告（等待刷卡）
+            Log.d(TAG, "========== 等待刷卡... ==========")
+            Log.d(TAG, "提示：请将卡片放置在读卡器感应区")
+            
+            val buffer = ByteArray(inEndpoint.maxPacketSize)
+            val cardDataBuilder = StringBuilder()
+            val startTime = System.currentTimeMillis()
+            val timeout = 10000  // 10秒超时
+            var lastKeyCode = 0  // 用于按键去重
+            
+            // 循环读取HID报告，直到获取完整卡号或超时
+            while (System.currentTimeMillis() - startTime < timeout) {
+                // 🔧 FIX: 使用interruptTransfer而非bulkTransfer（HID Interrupt端点）
+                val bytesRead = connection.interruptTransfer(inEndpoint, buffer, buffer.size, 100)
+                
+                // 🔧 FIX: 过滤空HID报告（避免无效循环）
+                if (bytesRead > 0 && buffer.any { it != 0.toByte() }) {
+                    // 解析HID键盘扫描码
+                    val keyCode = if (bytesRead >= 3) buffer[2].toInt() and 0xFF else 0
+                    val modifiers = if (bytesRead >= 1) buffer[0].toInt() and 0xFF else 0
+                    
+                    // 🔧 FIX: 按键去重（避免重复字符）
+                    if (keyCode != 0 && keyCode != lastKeyCode) {
+                        val char = hidKeyCodeToChar(keyCode, modifiers)
+                        if (char != null) {
+                            cardDataBuilder.append(char)
+                            Log.d(TAG, "接收字符: $char (keyCode=0x${keyCode.toString(16)}, modifiers=0x${modifiers.toString(16)})")
+                        }
+                        
+                        // 检测回车键（表示卡号输入结束）
+                        if (keyCode == 0x28) {  // Enter key
+                            Log.d(TAG, "✓ 检测到回车，卡号读取完成")
+                            break
+                        }
+                        
+                        lastKeyCode = keyCode
+                    } else if (keyCode == 0) {
+                        // 按键释放，重置去重标记
+                        lastKeyCode = 0
+                    }
+                }
+            }
+            
+            val cardNumber = cardDataBuilder.toString().trim()
+            
+            if (cardNumber.isEmpty()) {
+                Log.w(TAG, "⚠ 未读取到卡号（可能超时或无卡片）")
+                return null
+            }
+            
+            Log.d(TAG, "========== HID读卡完成 ==========")
+            Log.d(TAG, "卡号: $cardNumber")
+            Log.d(TAG, "长度: ${cardNumber.length}位")
+            
+            // 根据卡号格式判断卡片类型
+            val cardType = when {
+                cardNumber.length == 8 && cardNumber.all { it.isDigit() || it in 'A'..'F' || it in 'a'..'f' } -> "Mifare Classic 1K (HID)"
+                cardNumber.length == 10 -> "Mifare Classic 1K (Decimal)"
+                cardNumber.length == 14 -> "Mifare Classic 4K"
+                else -> "Unknown Card Type (HID)"
+            }
+            
+            return hashMapOf(
+                "uid" to cardNumber,
+                "type" to cardType,
+                "capacity" to getCardCapacity(cardType),
+                "timestamp" to java.time.Instant.now().toString(),
+                "isValid" to true,
+                "protocol" to "HID",
+                "rawUid" to cardNumber
+            )
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during HID card read: ${e.message}", e)
+            return hashMapOf(
+                "error" to "HID_READ_ERROR",
+                "message" to (e.message ?: "HID读卡失败"),
+                "isValid" to false
+            )
+        } finally {
+            try {
+                claimedInterface?.let { connection.releaseInterface(it) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing HID interface: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * 将HID键盘扫描码转换为字符
+     * 参考：USB HID Usage Tables (Keyboard/Keypad Page)
+     * 
+     * @param keyCode HID键盘扫描码（buffer[2]）
+     * @param modifiers 修饰键状态（buffer[0]）
+     *   - Bit 0 (0x01): Left Control
+     *   - Bit 1 (0x02): Left Shift
+     *   - Bit 2 (0x04): Left Alt
+     *   - Bit 3 (0x08): Left GUI (Windows/Command)
+     *   - Bit 4 (0x10): Right Control
+     *   - Bit 5 (0x20): Right Shift
+     *   - Bit 6 (0x40): Right Alt
+     *   - Bit 7 (0x80): Right GUI
+     */
+    private fun hidKeyCodeToChar(keyCode: Int, modifiers: Int = 0): Char? {
+        // 检查是否按下Shift键（左Shift或右Shift）
+        val isShiftPressed = (modifiers and 0x02) != 0 || (modifiers and 0x20) != 0
+        
+        return when (keyCode) {
+            // 数字键 0-9
+            0x1E -> '1'
+            0x1F -> '2'
+            0x20 -> '3'
+            0x21 -> '4'
+            0x22 -> '5'
+            0x23 -> '6'
+            0x24 -> '7'
+            0x25 -> '8'
+            0x26 -> '9'
+            0x27 -> '0'
+            
+            // 字母键 A-Z（0x04-0x1D）
+            // 🔧 FIX: 根据Shift键状态返回大写或小写
+            // 大多数读卡器配置为大写输出，但支持可配置情况
+            in 0x04..0x1D -> {
+                val baseChar = 'A' + (keyCode - 0x04)
+                // 如果未按Shift，返回小写；如果按下Shift，返回大写
+                // 注意：对于卡号读取，通常读卡器已配置好大小写，这里提供完整支持
+                if (isShiftPressed) baseChar else baseChar.lowercaseChar()
+            }
+            
+            else -> null
         }
     }
 
