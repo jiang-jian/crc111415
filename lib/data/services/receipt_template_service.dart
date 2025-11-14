@@ -1,0 +1,461 @@
+import 'dart:convert';
+import 'package:get/get.dart';
+import '../../core/storage/storage_service.dart';
+import '../models/receipt_template_model.dart';
+
+/// 小票模板服务
+/// 负责模板的存储、读取、解析和占位符替换
+class ReceiptTemplateService extends GetxService {
+  final StorageService _storage = Get.find<StorageService>();
+
+  static const String _storageKeyPrefix = 'receipt_template_';
+
+  // 当前活动的模板缓存
+  final Rx<ReceiptTemplate?> currentCustodyTemplate = Rx<ReceiptTemplate?>(
+    null,
+  );
+  final Rx<ReceiptTemplate?> currentPaymentTemplate = Rx<ReceiptTemplate?>(
+    null,
+  );
+  final Rx<ReceiptTemplate?> currentExchangeTemplate = Rx<ReceiptTemplate?>(
+    null,
+  );
+
+  /// 初始化服务
+  Future<ReceiptTemplateService> init() async {
+    _addLog('========== 初始化小票模板服务 ==========');
+
+    // 加载所有模板
+    await loadAllTemplates();
+
+    _addLog('========== 初始化完成 ==========');
+    return this;
+  }
+
+  /// 加载所有模板
+  Future<void> loadAllTemplates() async {
+    try {
+      currentCustodyTemplate.value = await getTemplate(
+        ReceiptTemplateType.custody,
+      );
+      currentPaymentTemplate.value = await getTemplate(
+        ReceiptTemplateType.payment,
+      );
+      currentExchangeTemplate.value = await getTemplate(
+        ReceiptTemplateType.exchange,
+      );
+
+      _addLog('✓ 已加载所有模板');
+    } catch (e) {
+      _addLog('✗ 加载模板失败: $e');
+    }
+  }
+
+  /// 获取指定类型的模板
+  Future<ReceiptTemplate?> getTemplate(ReceiptTemplateType type) async {
+    try {
+      final key = _getStorageKey(type);
+      final jsonString = _storage.getString(key);
+
+      if (jsonString == null || jsonString.isEmpty) {
+        _addLog('未找到 ${type.displayName} 模板，返回默认模板');
+        return _getDefaultTemplate(type);
+      }
+
+      final map = jsonDecode(jsonString) as Map<String, dynamic>;
+      final template = ReceiptTemplate.fromMap(map);
+
+      _addLog('✓ 已加载 ${type.displayName} 模板');
+      return template;
+    } catch (e) {
+      _addLog('✗ 获取模板失败: $e');
+      return _getDefaultTemplate(type);
+    }
+  }
+
+  /// 保存模板
+  Future<bool> saveTemplate(ReceiptTemplate template) async {
+    try {
+      final key = _getStorageKey(template.type);
+      final updatedTemplate = template.copyWith(updatedAt: DateTime.now());
+
+      final jsonString = jsonEncode(updatedTemplate.toMap());
+      await _storage.setString(key, jsonString);
+
+      // 更新缓存
+      _updateCache(updatedTemplate);
+
+      _addLog('✓ 已保存 ${template.type.displayName} 模板');
+      return true;
+    } catch (e) {
+      _addLog('✗ 保存模板失败: $e');
+      return false;
+    }
+  }
+
+  /// 删除模板
+  Future<bool> deleteTemplate(ReceiptTemplateType type) async {
+    try {
+      final key = _getStorageKey(type);
+      await _storage.remove(key);
+
+      // 清除缓存
+      _updateCache(null, type: type);
+
+      _addLog('✓ 已删除 ${type.displayName} 模板');
+      return true;
+    } catch (e) {
+      _addLog('✗ 删除模板失败: $e');
+      return false;
+    }
+  }
+
+  /// 渲染模板（替换占位符，支持循环语法）
+  String renderTemplate(ReceiptTemplate template, ReceiptPrintData data) {
+    String result = template.content;
+
+    // 1. 处理商品列表循环渲染
+    result = _renderProductLoop(result, data);
+
+    // 2. 替换基础占位符
+    final replacements = {
+      '{{storeName}}': data.storeName,
+      '{{operatorName}}': data.operatorName,
+      '{{storageId}}': data.storageId,
+      '{{memberId}}': data.memberId,
+      '{{memberName}}': data.memberName,
+      '{{telephone}}': data.telephone,
+      '{{numberTickets}}': data.numberTickets.toString(),
+      '{{storeAddress}}': data.storeAddress,
+      '{{operationTime}}': _formatDateTime(data.operationTime),
+      '{{printTime}}': _formatDateTime(data.printTime),
+      '{{barcode}}': data.barcode ?? '',
+    };
+
+    replacements.forEach((placeholder, value) {
+      result = result.replaceAll(placeholder, value);
+    });
+
+    // 3. 替换支付相关占位符（带金额格式化）
+    if (data.subtotal != null) {
+      result = result.replaceAll('{{subtotal}}', _formatAmount(data.subtotal!));
+    }
+    if (data.discount != null) {
+      result = result.replaceAll('{{discount}}', _formatAmount(data.discount!));
+    }
+    if (data.totalAmount != null) {
+      result = result.replaceAll(
+        '{{totalAmount}}',
+        _formatAmount(data.totalAmount!),
+      );
+    }
+    if (data.paidAmount != null) {
+      result = result.replaceAll(
+        '{{paidAmount}}',
+        _formatAmount(data.paidAmount!),
+      );
+    }
+    if (data.changeAmount != null) {
+      result = result.replaceAll(
+        '{{changeAmount}}',
+        _formatAmount(data.changeAmount!),
+      );
+    }
+    if (data.qrcodeData != null) {
+      result = result.replaceAll('{{qrcodeData}}', data.qrcodeData!);
+    }
+
+    _addLog('✓ 模板渲染完成');
+    return result;
+  }
+
+  /// 渲染商品列表循环
+  String _renderProductLoop(String template, ReceiptPrintData data) {
+    // 匹配 {{#products}}...{{/products}} 语法
+    final loopPattern = RegExp(
+      r'\{\{#products\}\}([\s\S]*?)\{\{/products\}\}',
+      multiLine: true,
+    );
+
+    return template.replaceAllMapped(loopPattern, (match) {
+      final loopContent = match.group(1) ?? '';
+      if (data.products == null || data.products!.isEmpty) {
+        return '';
+      }
+
+      final buffer = StringBuffer();
+      for (final product in data.products!) {
+        String itemContent = loopContent;
+
+        // 优化列宽：商品名(16字符) 单价(6字符) 数量(3字符) 价格(6字符)
+        final name = _padString(product.name, 16);
+        final unitPrice = _padString(
+          _formatAmount(product.unitPrice, withSymbol: false),
+          6,
+          alignRight: true,
+        );
+        final quantity = _padString(
+          product.quantity.toString(),
+          3,
+          alignRight: true,
+        );
+        final totalPrice = _padString(
+          _formatAmount(product.totalPrice, withSymbol: false),
+          6,
+          alignRight: true,
+        );
+
+        // 替换商品相关占位符
+        itemContent = itemContent.replaceAll('{{name}}', name);
+        itemContent = itemContent.replaceAll('{{unitPrice}}', unitPrice);
+        itemContent = itemContent.replaceAll('{{quantity}}', quantity);
+        itemContent = itemContent.replaceAll('{{totalPrice}}', totalPrice);
+
+        buffer.write(itemContent);
+      }
+
+      return buffer.toString();
+    });
+  }
+
+  /// 格式化金额（千分位 + 迪拜货币符号 AED）
+  String _formatAmount(double amount, {bool withSymbol = true}) {
+    final formatted = amount.toStringAsFixed(2);
+    final parts = formatted.split('.');
+    final intPart = parts[0];
+    final decPart = parts[1];
+
+    // 添加千分位分隔符
+    final intWithCommas = intPart.replaceAllMapped(
+      RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+      (match) => '${match.group(1)},',
+    );
+
+    final result = '$intWithCommas.$decPart';
+    return withSymbol ? 'AED $result' : result;
+  }
+
+  /// 字符串填充（固定宽度对齐）
+  String _padString(String text, int width, {bool alignRight = false}) {
+    // 计算实际字符宽度（中文2字符，英文1字符）
+    int actualWidth = 0;
+    for (int i = 0; i < text.length; i++) {
+      final code = text.codeUnitAt(i);
+      // 判断是否为中文字符（CJK统一汉字）
+      if (code >= 0x4E00 && code <= 0x9FFF) {
+        actualWidth += 2;
+      } else {
+        actualWidth += 1;
+      }
+    }
+
+    // 计算需要填充的空格数
+    final paddingNeeded = width - actualWidth;
+    if (paddingNeeded <= 0) {
+      // 超长则截断
+      return text.substring(0, (width / 2).ceil());
+    }
+
+    if (alignRight) {
+      return ' ' * paddingNeeded + text;
+    } else {
+      return text + ' ' * paddingNeeded;
+    }
+  }
+
+  /// 生成打印内容（包含模板渲染和格式化）
+  Future<String> generatePrintContent(
+    ReceiptTemplateType type,
+    ReceiptPrintData data,
+  ) async {
+    try {
+      final template = await getTemplate(type);
+
+      if (template == null) {
+        throw Exception('未找到 ${type.displayName} 模板');
+      }
+
+      final content = renderTemplate(template, data);
+
+      _addLog('✓ 生成打印内容成功');
+      return content;
+    } catch (e) {
+      _addLog('✗ 生成打印内容失败: $e');
+      rethrow;
+    }
+  }
+
+  /// 获取默认模板
+  ReceiptTemplate _getDefaultTemplate(ReceiptTemplateType type) {
+    final now = DateTime.now();
+
+    switch (type) {
+      case ReceiptTemplateType.custody:
+        return ReceiptTemplate(
+          id: 'default_custody',
+          type: ReceiptTemplateType.custody,
+          content: _getDefaultCustodyTemplate(),
+          createdAt: now,
+          updatedAt: now,
+          isActive: true,
+        );
+
+      case ReceiptTemplateType.payment:
+        return ReceiptTemplate(
+          id: 'default_payment',
+          type: ReceiptTemplateType.payment,
+          content: _getDefaultPaymentTemplate(),
+          createdAt: now,
+          updatedAt: now,
+          isActive: true,
+        );
+
+      case ReceiptTemplateType.exchange:
+        return ReceiptTemplate(
+          id: 'default_exchange',
+          type: ReceiptTemplateType.exchange,
+          content: _getDefaultExchangeTemplate(),
+          createdAt: now,
+          updatedAt: now,
+          isActive: true,
+        );
+    }
+  }
+
+  /// 默认托管小票模板
+  String _getDefaultCustodyTemplate() {
+    return '''
+[center]<xl>HOLOX超乐场</xl>[/center]
+[center]===[/center]
+[left]**存币单号：**{{storageId}}[/left]
+[left]**门店：**{{storeName}}[/left]
+---
+[center]{{barcode}}[/center]
+---
+[left]会员编号：{{memberId}}[/left]
+[left]操作时间：{{operationTime}}[/left]
+[left]**彩票数量：**<large>{{numberTickets}}</large>[/left]
+===
+[left]<small>打印时间：{{printTime}}</small>[/left]
+[left]<small>操作员：{{operatorName}}</small>[/left]
+[left]<small>地址：{{storeAddress}}</small>[/left]
+[left]<small>电话：{{telephone}}</small>[/left]
+===
+[center]请妥善保管好您的小票[/center]
+[center]如需兑换礼品请持小票到收银台兑换！[/center]
+[center]**感谢惠顾！祝您游玩愉快！**[/center]
+[center]===[/center]
+''';
+  }
+
+  /// 默认支付小票模板
+  String _getDefaultPaymentTemplate() {
+    return '''
+[center]<xl>**HOLOX超乐城**</xl>[/center]
+[left]存币单号：{{storageId}}[/left]
+[left]============================[/left]
+[left]{{storeName}}[/left]
+[left]商品          单价 数量 价格[/left]
+[left]----------------------------[/left]
+{{#products}}
+[left]{{name}} {{unitPrice}} {{quantity}} {{totalPrice}}[/left]
+{{/products}}
+[left]----------------------------[/left]
+[left]小计：{{subtotal}}[/left]
+[left]优惠金额：-{{discount}}[/left]
+[left]应收金额：{{totalAmount}}[/left]
+[left]实收金额：{{paidAmount}}[/left]
+[left]找零金额：{{changeAmount}}[/left]
+[left]============================[/left]
+[left]打印时间：{{printTime}}[/left]
+[left]操作员：{{operatorName}}[/left]
+[left]地址：{{storeAddress}}[/left]
+[left]电话：{{telephone}}[/left]
+[left]----------------------------[/left]
+[left]请当面点清所有商品及找零[/left]
+[left]如有质量问题请在30天内凭小票换货[/left]
+[center]============================[/center]
+[center]开发票请扫描下方二维码[/center]
+[center]7天内有效[/center]
+[center]{{qrcodeData}}[/center]
+[center]============================[/center]
+[center]**谢谢惠顾！欢迎下次光临！**[/center]
+''';
+  }
+
+  /// 默认兑换小票模板
+  String _getDefaultExchangeTemplate() {
+    return '''
+[center]<xl>**HOLOX超乐城**</xl>[/center]
+[left]存币单号：{{storageId}}[/left]
+[left]============================[/left]
+[left]{{storeName}}[/left]
+[left]商品          单价 数量 价格[/left]
+[left]----------------------------[/left]
+{{#products}}
+[left]{{name}} {{unitPrice}} {{quantity}} {{totalPrice}}[/left]
+{{/products}}
+[left]----------------------------[/left]
+[left]小计：{{subtotal}}[/left]
+[left]优惠彩票：-{{discount}}[/left]
+[left]应收彩票：{{totalAmount}}[/left]
+[left]实收彩票：{{paidAmount}}[/left]
+[left]剩余彩票：{{remainingTickets}}[/left]
+[left]============================[/left]
+[left]打印时间：{{printTime}}[/left]
+[left]操作员：{{operatorName}}[/left]
+[left]地址：{{storeAddress}}[/left]
+[left]电话：{{telephone}}[/left]
+[left]----------------------------[/left]
+[left]请当面点清所有商品[/left]
+[left]如有质量问题请在30天内凭小票换货（无退款）[/left]
+[center]============================[/center]
+[center]**谢谢惠顾！欢迎下次光临！**[/center]
+''';
+  }
+
+  /// 更新缓存
+  void _updateCache(ReceiptTemplate? template, {ReceiptTemplateType? type}) {
+    final targetType = template?.type ?? type;
+
+    if (targetType == null) return;
+
+    switch (targetType) {
+      case ReceiptTemplateType.custody:
+        currentCustodyTemplate.value = template;
+        break;
+      case ReceiptTemplateType.payment:
+        currentPaymentTemplate.value = template;
+        break;
+      case ReceiptTemplateType.exchange:
+        currentExchangeTemplate.value = template;
+        break;
+    }
+  }
+
+  /// 获取存储键
+  String _getStorageKey(ReceiptTemplateType type) {
+    return '$_storageKeyPrefix${type.code}';
+  }
+
+  /// 格式化日期时间
+  String _formatDateTime(DateTime dateTime) {
+    return '${dateTime.year}-'
+        '${dateTime.month.toString().padLeft(2, '0')}-'
+        '${dateTime.day.toString().padLeft(2, '0')} '
+        '${dateTime.hour.toString().padLeft(2, '0')}:'
+        '${dateTime.minute.toString().padLeft(2, '0')}:'
+        '${dateTime.second.toString().padLeft(2, '0')}';
+  }
+
+  /// 添加日志
+  void _addLog(String message) {
+    print('[ReceiptTemplateService] $message');
+  }
+
+  @override
+  void onClose() {
+    _addLog('小票模板服务已关闭');
+    super.onClose();
+  }
+}

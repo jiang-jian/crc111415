@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 允许所有域名的明文流量和 HTTPS 流量 -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <!-- 信任系统预装的 CA 证书 -->
+            <certificates src="system" />
+            <!-- 信任用户安装的 CA 证书（用于调试） -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+    
+    <!-- 针对开发和测试环境的域名配置 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">dev-alland.zzss.com</domain>
+        <domain includeSubdomains="true">test-alland.zzss.com</domain>
+        <domain includeSubdomains="true">alland.zzss.com</domain>
+        <domain includeSubdomains="true">zzss.com</domain>
+        <!-- 本地开发环境 -->
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

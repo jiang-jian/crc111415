@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB打印机设备过滤器 -->
+    <!-- USB设备类7表示打印机 -->
+    <usb-device class="7" />
+    
+    <!-- USB读卡器设备过滤器 -->
+    <!-- USB设备类11表示CCID (Chip Card Interface Device) -->
+    <usb-device class="11" />
+</resources>
+
