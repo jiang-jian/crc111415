@@ -575,46 +575,72 @@ class ExternalPrinterView extends StatelessWidget {
     ExternalPrinterDevice device,
     ExternalPrinterService service,
   ) async {
-    // 重新扫描确认设备仍然连接
-    await service.scanUsbPrinters();
-
-    // 检查设备是否还在列表中
-    final currentDevice = service.detectedPrinters.firstWhereOrNull(
-      (d) => d.deviceId == device.deviceId,
-    );
-
-    if (currentDevice == null) {
-      Toast.error(message: '设备已断开，请重新扫描');
+    // 防止重复点击
+    if (service.isPrinting.value) {
+      print('[ExternalPrinter] 测试打印正在进行中，忽略重复点击');
       return;
     }
 
-    // 检查是否已有权限
-    final alreadyHasPermission = await service.hasPermission(currentDevice);
+    service.isPrinting.value = true;
+    print('[ExternalPrinter] 开始测试打印，设备: ${device.displayName}');
 
-    if (!alreadyHasPermission) {
-      // 没有权限：显示Toast提示
-      Toast.info(message: '正在请求打印机访问权限\n请在弹出的对话框中点击"允许"');
+    try {
+      // 重新扫描确认设备仍然连接
+      print('[ExternalPrinter] 重新扫描设备...');
+      await service.scanUsbPrinters();
 
-      // 延迟让Toast显示完整
-      await Future.delayed(const Duration(milliseconds: 500));
+      // 检查设备是否还在列表中
+      final currentDevice = service.detectedPrinters.firstWhereOrNull(
+        (d) => d.deviceId == device.deviceId,
+      );
 
-      // 请求USB设备权限（弹出系统对话框）
-      final hasPermission = await service.requestPermission(currentDevice);
-      if (!hasPermission) {
-        Toast.error(message: '未授予USB设备权限，无法打印');
+      if (currentDevice == null) {
+        print('[ExternalPrinter] 设备已断开');
+        Toast.error(message: '设备已断开，请重新扫描');
         return;
       }
-    }
 
-    // 使用最新的设备信息进行打印
-    final result = await service.testPrint(currentDevice);
+      // 检查是否已有权限
+      final alreadyHasPermission = await service.hasPermission(currentDevice);
+      print('[ExternalPrinter] 权限检查结果: $alreadyHasPermission');
 
-    if (result.success) {
-      // 成功时不显示toast，只显示测试通过状态
-      service.testPrintSuccess.value = true;
-    } else {
-      // 失败时显示错误信息
-      Toast.error(message: '打印失败: ${result.message}');
+      if (!alreadyHasPermission) {
+        // 没有权限：显示Toast提示
+        Toast.info(message: '正在请求打印机访问权限\n请在弹出的对话框中点击"允许"');
+
+        // 延迟让Toast显示完整
+        await Future.delayed(const Duration(milliseconds: 500));
+
+        // 请求USB设备权限（弹出系统对话框）
+        print('[ExternalPrinter] 请求USB权限...');
+        final hasPermission = await service.requestPermission(currentDevice);
+        print('[ExternalPrinter] 权限请求结果: $hasPermission');
+        
+        if (!hasPermission) {
+          Toast.error(message: '未授予USB设备权限，无法打印');
+          return;
+        }
+      }
+
+      // 使用最新的设备信息进行打印
+      print('[ExternalPrinter] 发送打印指令...');
+      final result = await service.testPrint(currentDevice);
+      print('[ExternalPrinter] 打印结果: ${result.success}, 消息: ${result.message}');
+
+      if (result.success) {
+        // 成功时不显示toast，只显示测试通过状态
+        service.testPrintSuccess.value = true;
+      } else {
+        // 失败时显示错误信息
+        Toast.error(message: '打印失败: ${result.message}');
+      }
+    } catch (e, stackTrace) {
+      print('[ExternalPrinter] 测试打印异常: $e');
+      print('[ExternalPrinter] 堆栈跟踪: $stackTrace');
+      Toast.error(message: '打印失败: $e');
+    } finally {
+      service.isPrinting.value = false;
+      print('[ExternalPrinter] 测试打印流程结束');
     }
   }
 }

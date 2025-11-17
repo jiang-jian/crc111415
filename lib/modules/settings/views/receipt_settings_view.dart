@@ -959,6 +959,12 @@ class _ReceiptSettingsViewState extends State<ReceiptSettingsView> {
   }
 
   Future<void> _testPrint() async {
+    // 防止重复点击
+    if (_isPrinting.value) {
+      print('[ReceiptSettings] 测试打印正在进行中，忽略重复点击');
+      return;
+    }
+
     if (_hasUnsavedChanges.value) {
       Toast.error(message: '请先保存模板');
       return;
@@ -970,6 +976,7 @@ class _ReceiptSettingsViewState extends State<ReceiptSettingsView> {
     }
 
     _isPrinting.value = true;
+    print('[ReceiptSettings] 开始测试打印');
 
     try {
       final mockData = ReceiptPrintData.mock();
@@ -978,9 +985,11 @@ class _ReceiptSettingsViewState extends State<ReceiptSettingsView> {
         mockData,
       );
       final device = _printerService.selectedPrinter.value!;
+      print('[ReceiptSettings] 打印内容生成成功，设备: ${device.displayName}');
 
       // 检查是否已有权限
       final alreadyHasPermission = await _printerService.hasPermission(device);
+      print('[ReceiptSettings] 权限检查结果: $alreadyHasPermission');
 
       if (!alreadyHasPermission) {
         // 没有权限：显示Toast提示
@@ -990,25 +999,35 @@ class _ReceiptSettingsViewState extends State<ReceiptSettingsView> {
         await Future.delayed(const Duration(milliseconds: 500));
 
         // 请求USB设备权限（弹出系统对话框）
+        print('[ReceiptSettings] 请求USB权限...');
         final hasPermission = await _printerService.requestPermission(device);
+        print('[ReceiptSettings] 权限请求结果: $hasPermission');
+        
         if (!hasPermission) {
           Toast.error(message: '未授予USB设备权限，无法打印');
           return;
         }
       }
 
+      print('[ReceiptSettings] 发送打印指令...');
       final result = await _printerService.testPrint(
         device,
         content: printContent,
       );
+      print('[ReceiptSettings] 打印结果: ${result.success}, 消息: ${result.message}');
 
       if (result.success) {
         Toast.success(message: '测试打印已发送');
+      } else {
+        Toast.error(message: result.message ?? '打印失败');
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      print('[ReceiptSettings] 测试打印异常: $e');
+      print('[ReceiptSettings] 堆栈跟踪: $stackTrace');
       Toast.error(message: '打印失败: $e');
     } finally {
       _isPrinting.value = false;
+      print('[ReceiptSettings] 测试打印流程结束');
     }
   }
 
