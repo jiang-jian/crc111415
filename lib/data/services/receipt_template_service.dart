@@ -188,7 +188,7 @@ class ReceiptTemplateService extends GetxService {
         String itemContent = loopContent;
 
         // 列宽定义（保证对齐）：
-        // 商品名(9字符左对齐) + 单价(7字符右对齐) + 数量(5字符右对齐) + 价格(7字符右对齐)
+        // 商品名(9字符左对齐) + 单价(7字符居中对齐) + 数量(5字符居中对齐) + 价格(7字符居中对齐)
         // 总宽度28字符，适配58mm热敏纸（32字符宽度）
         
         // 格式化价格列（始终在第一行对应列位置显示）
@@ -438,7 +438,7 @@ class ReceiptTemplateService extends GetxService {
 [left]存币单号：{{storageId}}[/left]
 [left]门店：{{storeName}}[/left]
 [center]============================[/center]
-[left]商品        单价 数量   价格[/left]
+[left]商品       单价   数量    价格[/left]
 [center]----------------------------[/center]
 {{#products}}
 [left]{{name}} {{unitPrice}} {{quantity}} {{totalPrice}}[/left]
@@ -473,7 +473,7 @@ class ReceiptTemplateService extends GetxService {
 [left]存币单号：{{storageId}}[/left]
 [left]门店：{{storeName}}[/left]
 [center]============================[/center]
-[left]商品        单价 数量   价格[/left]
+[left]商品       单价   数量    价格[/left]
 [center]----------------------------[/center]
 {{#products}}
 [left]{{name}} {{unitPrice}} {{quantity}} {{totalPrice}}[/left]
