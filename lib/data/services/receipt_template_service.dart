@@ -195,17 +195,17 @@ class ReceiptTemplateService extends GetxService {
         final unitPrice = _padString(
           _formatAmount(product.unitPrice, withSymbol: false),
           7,
-          alignRight: true,
+          alignCenter: true,
         );
         final quantity = _padString(
           product.quantity.toString(),
           5,
-          alignRight: true,
+          alignCenter: true,
         );
         final totalPrice = _padString(
           _formatAmount(product.totalPrice, withSymbol: false),
           7,
-          alignRight: true,
+          alignCenter: true,
         );
 
         // 商品名支持自动换行
@@ -214,9 +214,9 @@ class ReceiptTemplateService extends GetxService {
         // 构建商品行内容（严格列对齐）：
         // 第1行：商品名第1部分 + 单价 + 数量 + 价格（价格信息始终在第一行）
         // 第2-N行：商品名剩余部分 + 空白列（保持对齐）
-        final emptyPrice = _padString('', 7, alignRight: true);  // 空白单价列
-        final emptyQty = _padString('', 5, alignRight: true);    // 空白数量列
-        final emptyTotal = _padString('', 7, alignRight: true);  // 空白价格列
+        final emptyPrice = _padString('', 7, alignCenter: true);  // 空白单价列
+        final emptyQty = _padString('', 5, alignCenter: true);    // 空白数量列
+        final emptyTotal = _padString('', 7, alignCenter: true);  // 空白价格列
         
         String nameContent;
         if (nameLines.length == 1) {
@@ -265,7 +265,7 @@ class ReceiptTemplateService extends GetxService {
   }
 
   /// 字符串填充（固定宽度对齐）
-  String _padString(String text, int width, {bool alignRight = false}) {
+  String _padString(String text, int width, {bool alignRight = false, bool alignCenter = false}) {
     // 计算实际字符宽度（中文2字符，英文1字符）
     int actualWidth = 0;
     for (int i = 0; i < text.length; i++) {
@@ -285,9 +285,16 @@ class ReceiptTemplateService extends GetxService {
       return text.substring(0, (width / 2).ceil());
     }
 
-    if (alignRight) {
+    if (alignCenter) {
+      // 居中对齐：空格平分到两边
+      final leftPadding = paddingNeeded ~/ 2;
+      final rightPadding = paddingNeeded - leftPadding;
+      return ' ' * leftPadding + text + ' ' * rightPadding;
+    } else if (alignRight) {
+      // 右对齐：空格在左边
       return ' ' * paddingNeeded + text;
     } else {
+      // 左对齐：空格在右边
       return text + ' ' * paddingNeeded;
     }
   }
