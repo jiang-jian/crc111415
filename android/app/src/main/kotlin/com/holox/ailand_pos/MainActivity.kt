@@ -4,6 +4,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import android.os.Bundle
 import android.view.WindowManager
+import com.holox.ailand_pos.mingtech.MingtechReaderPlugin
 
 class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,5 +28,8 @@ class MainActivity : FlutterActivity() {
         
         // 注册 External Card Reader Plugin（外接USB读卡器）
         flutterEngine.plugins.add(ExternalCardReaderPlugin())
+        
+        // 注册 Mingtech Reader Plugin（明泰MT3读卡器）
+        flutterEngine.plugins.add(MingtechReaderPlugin())
     }
 }

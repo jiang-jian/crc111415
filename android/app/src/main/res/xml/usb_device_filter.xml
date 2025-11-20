@@ -7,5 +7,9 @@
     <!-- USB读卡器设备过滤器 -->
     <!-- USB设备类11表示CCID (Chip Card Interface Device) -->
     <usb-device class="11" />
+    
+    <!-- 明泰MT3-URF1-R333读卡器 (Vendor-Defined HID) -->
+    <!-- VID: 0x23A4, PID: 0x020C -->
+    <usb-device vendor-id="9124" product-id="524" />
 </resources>
 
